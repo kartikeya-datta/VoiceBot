@@ -8,15 +8,13 @@ import numpy as np
 import tempfile
 import soundfile as sf
 from transformers import pipeline
-import vosk
-import json
+import threading
 
 # Set your OpenAI API key
 openai.api_key = os.environ.get("Your_open_AI_API_key")
 
 # Initialize text-to-speech engine
 engine = pyttsx3.init()
-
 def customize_tts():
     voices = engine.getProperty('voices')
     engine.setProperty('voice', voices[1].id)  # Choose female voice
@@ -41,27 +39,6 @@ MAX_HISTORY = 10
 message_history = [
     {"role": "system", "content": "You are a helpful and conversational voice assistant."}
 ]
-
-# Hotword activation setup
-def listen_for_hotword():
-    # Set up the vosk model
-    model = vosk.Model("model")  # Download the Vosk model (e.g., small model from Vosk website)
-    recognizer = vosk.KaldiRecognizer(model, 16000)
-
-    # Set up microphone input
-    mic = sr.Microphone()
-
-    with mic as source:
-        print("Listening for hotword...")
-        while True:
-            audio = sr.Recognizer().listen(source, timeout=5, phrase_time_limit=10)
-            if recognizer.AcceptWaveform(audio.get_wav_data()):
-                result = json.loads(recognizer.Result())
-                if "text" in result and "hey assistant" in result["text"].lower():
-                    print("Hotword detected! Activating assistant...")
-                    return True
-            else:
-                print("Still waiting for hotword...")
 
 # Voice listener with retry logic
 def listen_with_retry(max_attempts=3):
@@ -145,14 +122,35 @@ def voice_input_trigger():
         return result, emotion
     return "😕 I couldn't understand you after a few tries. You can try again or type your message!", "neutral"
 
+# Hotword listener (on a separate thread)
+hotword_active = False
+
+def listen_for_hotword():
+    global hotword_active
+    recognizer = sr.Recognizer()
+    mic = sr.Microphone()
+
+    with mic as source:
+        recognizer.adjust_for_ambient_noise(source, duration=1)
+
+        while True:
+            if not hotword_active:
+                print("Listening for hotword...")
+                audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+                try:
+                    text = recognizer.recognize_google(audio)
+                    print(f"Hotword detected: {text}")
+                    if "assistant" in text.lower():
+                        print("Activating assistant...")
+                        hotword_active = True
+                        return "Hotword detected", "neutral"
+                except (sr.UnknownValueError, sr.WaitTimeoutError):
+                    continue
+
 # Gradio UI
-def hotword_activation():
-    if listen_for_hotword():
-        print("Hotword detected! Starting voice interaction.")
-        result, emotion = listen_with_retry()
-        if result:
-            return result, emotion
-    return "Hotword not detected.", "neutral"
+def start_hotword_listener():
+    hotword_thread = threading.Thread(target=listen_for_hotword, daemon=True)
+    hotword_thread.start()
 
 with gr.Blocks(title="AI Voice Assistant with Emotion Detection") as demo:
     gr.Markdown("## 🎙️ AI Voice Assistant with Emotion Detection + Text + Voice Input + Smart Memory")
@@ -163,8 +161,11 @@ with gr.Blocks(title="AI Voice Assistant with Emotion Detection") as demo:
     output = gr.Textbox(label="Assistant Response", lines=4)
     warnbox = gr.Textbox(label="Status", lines=1)
 
-    voice_btn.click(fn=hotword_activation, outputs=[text_input, warnbox])
+    voice_btn.click(fn=voice_input_trigger, outputs=[text_input, warnbox])
     text_input.change(fn=chat_with_gpt, inputs=[text_input, warnbox], outputs=[output, warnbox])
     voice_btn.click(fn=chat_with_gpt, inputs=[text_input, warnbox], outputs=[output, warnbox])
+
+    # Start listening for hotword in a separate thread when the app starts
+    start_hotword_listener()
 
 demo.launch()
