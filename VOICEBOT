@@ -6,40 +6,40 @@ import librosa
 import numpy as np
 import tempfile
 import soundfile as sf
+from transformers import Wav2Vec2ForSequenceClassification, Wav2Vec2Processor
+import torch
 
 openai.api_key = os.environ.get("Your_open_AI_API_key")
 
 engine = pyttsx3.init()
 
+# Initialize Hugging Face model and processor
+model_name = "ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition"
+processor = Wav2Vec2Processor.from_pretrained(model_name)
+model = Wav2Vec2ForSequenceClassification.from_pretrained(model_name)
+
 def customize_tts():
     voices = engine.getProperty('voices')
-    engine.setProperty('voice', voices[1].id) 
-    engine.setProperty('rate', 150)
-    engine.setProperty('volume', 1.0)
+    engine.setProperty('voice', voices[1].id)  # Choose voice (e.g., index 1 for female)
+    engine.setProperty('rate', 150)  # Adjust rate (speed of speech)
+    engine.setProperty('volume', 1.0)  # Set volume to maximum
 
 def speak(text):
     engine.say(text)
     engine.runAndWait()
 
-def extract_emotion_features(audio_data, sr):
-    mfccs = librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=13)
-    mfccs_mean = np.mean(mfccs, axis=1)
-    zcr = np.mean(librosa.feature.zero_crossing_rate(audio_data))
-    energy = np.mean(librosa.feature.rms(y=audio_data))
-    return np.concatenate((mfccs_mean, [zcr, energy]))
+def extract_emotion_from_audio(audio_data, sr):
+    # Convert audio data to the format the model expects
+    input_values = processor(audio_data, return_tensors="pt", sampling_rate=sr).input_values
 
-def classify_emotion(audio_data, sr):
-    features = extract_emotion_features(audio_data, sr)
-    energy = features[-1]
+    # Predict emotion
+    with torch.no_grad():
+        logits = model(input_values).logits
 
-    if energy > 0.06:
-        return "happy"
-    elif energy < 0.02:
-        return "sad"
-    elif features[-2] > 0.12:
-        return "angry"
-    else:
-        return "neutral"
+    # Map logits to emotions
+    predicted_class = torch.argmax(logits, dim=-1).item()
+    emotions = ["neutral", "happy", "sad", "angry", "fearful", "disgust", "surprised"]  # Add relevant emotions
+    return emotions[predicted_class]
 
 def respond_emotionally(text, emotion):
     if emotion == "happy":
@@ -48,6 +48,12 @@ def respond_emotionally(text, emotion):
         return "I’m here for you. " + text
     elif emotion == "angry":
         return "Let’s try to sort this out calmly. " + text
+    elif emotion == "fearful":
+        return "I understand you're anxious. Let's take it easy. " + text
+    elif emotion == "disgust":
+        return "I can sense you're not happy. Let's talk it through. " + text
+    elif emotion == "surprised":
+        return "You seem surprised! " + text
     else:
         return text
 
@@ -62,7 +68,7 @@ def listen_and_detect_emotion(recognizer, mic):
                 tmp_wav_path = tmp_wav.name
 
             y, sr_lib = librosa.load(tmp_wav_path, sr=None)
-            emotion = classify_emotion(y, sr_lib)
+            emotion = extract_emotion_from_audio(y, sr_lib)
 
             print(f"Detected Emotion: {emotion}")
             print("Recognizing...")

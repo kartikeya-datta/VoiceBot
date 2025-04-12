@@ -5,6 +5,9 @@ import os
 import speech_recognition as sr
 import librosa
 import numpy as np
+import tempfile
+import soundfile as sf
+from transformers import pipeline
 
 # Set your OpenAI API key
 openai.api_key = os.environ.get("Your_open_AI_API_key")
@@ -22,26 +25,13 @@ def speak(text):
     engine.say(text)
     engine.runAndWait()
 
-# Emotion detection functions using librosa
-def extract_emotion_features(audio_data, sr):
-    mfccs = librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=13)
-    mfccs_mean = np.mean(mfccs, axis=1)
-    zcr = np.mean(librosa.feature.zero_crossing_rate(audio_data))
-    energy = np.mean(librosa.feature.rms(y=audio_data))
-    return np.concatenate((mfccs_mean, [zcr, energy]))
+# Emotion detection using HuggingFace's pre-trained model
+emotion_recognizer = pipeline("audio-classification", model="ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition")
 
-def classify_emotion(audio_data, sr):
-    features = extract_emotion_features(audio_data, sr)
-    energy = features[-1]
-
-    if energy > 0.06:
-        return "happy"
-    elif energy < 0.02:
-        return "sad"
-    elif features[-2] > 0.12:
-        return "angry"
-    else:
-        return "neutral"
+def classify_emotion_using_huggingface(audio_data):
+    # Use HuggingFace model for emotion classification
+    emotion = emotion_recognizer(audio_data)
+    return emotion[0]['label'].lower()  # Extract the emotion label
 
 # Chat memory limit
 MAX_HISTORY = 10
@@ -66,14 +56,13 @@ def listen_with_retry(max_attempts=3):
                 text = recognizer.recognize_google(audio)
                 print(f"You said: {text}")
 
-                # Emotion detection
+                # Emotion detection using HuggingFace model
                 audio_data = audio.get_wav_data()
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_wav:
                     tmp_wav.write(audio_data)
                     tmp_wav_path = tmp_wav.name
 
-                y, sr_lib = librosa.load(tmp_wav_path, sr=None)
-                emotion = classify_emotion(y, sr_lib)
+                emotion = classify_emotion_using_huggingface(tmp_wav_path)
 
                 print(f"Detected Emotion: {emotion}")
                 return text, emotion
