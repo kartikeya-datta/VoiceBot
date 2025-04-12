@@ -51,21 +51,47 @@ def listen_with_retry(recognizer, mic, max_attempts=3):
         attempts += 1
     return None
 
-def generate_response(prompt):
+# # we can truncate a prompt for cost efficiency, if we want. i did it for testing 😁
+# def truncate_prompt(prompt, max_words=100):
+#     words = prompt.split()
+#     if len(words) > max_words:
+#         return " ".join(words[:max_words])
+#     return prompt
+
+
+def generate_response(prompt, message_history):
     try:
+        # Append user message to history
+        message_history.append({"role": "user", "content": prompt})
+
+        # Get response from OpenAI
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            request_timeout=10  # sets the maximum time to wait for a response
+            messages=message_history,
+            request_timeout=10
         )
-        message = response['choices'][0]['message']['content']
-        return message
+
+        # Extract and store assistant's reply
+        reply = response['choices'][0]['message']['content']
+        message_history.append({"role": "assistant", "content": reply})
+        
+                # Truncate history to the last N exchanges + system message
+        MAX_HISTORY = 10
+        if len(message_history) > 2 * MAX_HISTORY + 1:
+            message_history = [message_history[0]] + message_history[-2 * MAX_HISTORY:]
+            print("Notice: You have reached the memory limit. Old messages were removed.")
+            speak("You've reached the memory limit. To keep things fast, I removed the oldest messages.")
+            
+        return reply
     except Exception as e:
         print(f"Error generating response: {e}")
         speak("There was an error generating a response.")
         return None
 
+
 def main():
+    message_history = [
+    {"role": "system", "content": "You are a helpful and conversational voice assistant."}]
     # Call the function to customize TTS settings
     customize_tts()
 
@@ -83,8 +109,10 @@ def main():
         if user_input:
             if user_input.lower() in ["exit", "quit", "stop", "bye", "goodbye"]:
                 speak("Goodbye!")
-                break
-            response = generate_response(user_input)
+                break       
+            # short_prompt = truncate_prompt(user_input)
+            # response = generate_response(short_prompt)
+            response = generate_response(user_input, message_history)
             if response:
                 print(f"Assistant: {response}")
                 speak(response)
