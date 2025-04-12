@@ -8,6 +8,8 @@ import tempfile
 import soundfile as sf
 from transformers import Wav2Vec2ForSequenceClassification, Wav2Vec2Processor
 import torch
+from vosk import Model, KaldiRecognizer
+import pyaudio
 
 openai.api_key = os.environ.get("Your_open_AI_API_key")
 
@@ -120,6 +122,25 @@ def generate_response(prompt, message_history):
         speak("There was an error generating a response.")
         return None
 
+def activate_hotword(wake_word="Hey Raju"):
+    # Initialize the Vosk model for hotword detection
+    model = Model("model")  # Path to vosk model directory
+    recognizer = KaldiRecognizer(model, 16000)
+    p = pyaudio.PyAudio()
+
+    # Start listening for the wake word
+    stream = p.open(rate=16000, channels=1, format=pyaudio.paInt16, input=True, frames_per_buffer=8000)
+    print("Listening for wake word...")
+    while True:
+        data = stream.read(4000)
+        if recognizer.AcceptWaveform(data):
+            result = recognizer.Result()
+            if wake_word.lower() in result.lower():
+                print(f"Hotword '{wake_word}' detected!")
+                return True
+        else:
+            continue
+
 def main():
     message_history = [{"role": "system", "content": "You are a helpful and conversational voice assistant."}]
     customize_tts()
@@ -134,16 +155,17 @@ def main():
     speak("Hello! I'm your assistant. How can I help you today?")
 
     while True:
-        user_input, emotion = listen_with_retry(recognizer, mic)
-        if user_input:
-            if user_input.lower() in ["exit", "quit", "stop", "bye", "goodbye"]:
-                speak("Goodbye!")
-                break
-            response = generate_response(user_input, message_history)
-            if response:
-                emotional_reply = respond_emotionally(response, emotion)
-                print(f"Assistant: {emotional_reply}")
-                speak(emotional_reply)
+        if activate_hotword():  # Wait for hotword activation
+            user_input, emotion = listen_with_retry(recognizer, mic)
+            if user_input:
+                if user_input.lower() in ["exit", "quit", "stop", "bye", "goodbye"]:
+                    speak("Goodbye!")
+                    break
+                response = generate_response(user_input, message_history)
+                if response:
+                    emotional_reply = respond_emotionally(response, emotion)
+                    print(f"Assistant: {emotional_reply}")
+                    speak(emotional_reply)
 
 if __name__ == "__main__":
     main()
