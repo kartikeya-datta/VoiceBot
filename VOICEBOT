@@ -34,7 +34,7 @@ def listen(recognizer, mic):
             print("You didn't say anything.")
             speak("You didn't say anything.")
             return None
-        
+# Listen with retry
 def listen_with_retry(recognizer, mic, max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
