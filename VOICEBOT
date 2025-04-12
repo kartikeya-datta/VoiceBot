@@ -2,6 +2,10 @@ import speech_recognition as sr
 import pyttsx3
 import openai
 import os
+import librosa
+import numpy as np
+import tempfile
+import soundfile as sf
 
 openai.api_key = os.environ.get("Your_open_AI_API_key")
 
@@ -17,106 +21,123 @@ def speak(text):
     engine.say(text)
     engine.runAndWait()
 
-def listen(recognizer, mic):
+def extract_emotion_features(audio_data, sr):
+    mfccs = librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=13)
+    mfccs_mean = np.mean(mfccs, axis=1)
+    zcr = np.mean(librosa.feature.zero_crossing_rate(audio_data))
+    energy = np.mean(librosa.feature.rms(y=audio_data))
+    return np.concatenate((mfccs_mean, [zcr, energy]))
+
+def classify_emotion(audio_data, sr):
+    features = extract_emotion_features(audio_data, sr)
+    energy = features[-1]
+
+    if energy > 0.06:
+        return "happy"
+    elif energy < 0.02:
+        return "sad"
+    elif features[-2] > 0.12:
+        return "angry"
+    else:
+        return "neutral"
+
+def respond_emotionally(text, emotion):
+    if emotion == "happy":
+        return "You sound cheerful! " + text
+    elif emotion == "sad":
+        return "I’m here for you. " + text
+    elif emotion == "angry":
+        return "Let’s try to sort this out calmly. " + text
+    else:
+        return text
+
+def listen_and_detect_emotion(recognizer, mic):
     with mic as source:
         print("Listening...")
         try:
             audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+            audio_data = audio.get_wav_data()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_wav:
+                tmp_wav.write(audio_data)
+                tmp_wav_path = tmp_wav.name
+
+            y, sr_lib = librosa.load(tmp_wav_path, sr=None)
+            emotion = classify_emotion(y, sr_lib)
+
+            print(f"Detected Emotion: {emotion}")
             print("Recognizing...")
             text = recognizer.recognize_google(audio)
             print(f"You said: {text}")
-            return text
+            return text, emotion
         except sr.UnknownValueError:
-            print("Sorry, I could not understand the audio.")
             speak("Sorry, I could not understand the audio.")
-            return None
         except sr.RequestError:
-            print("There was an error with the speech recognition service.")
             speak("There was an error with the speech recognition service.")
-            return None
         except sr.WaitTimeoutError:
-            print("You didn't say anything.")
             speak("You didn't say anything.")
-            return None
+        return None, "neutral"
 
-# Listen with retry
 def listen_with_retry(recognizer, mic, max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
-        user_input = listen(recognizer, mic)
-        if user_input is not None:
-            return user_input
+        text, emotion = listen_and_detect_emotion(recognizer, mic)
+        if text:
+            return text, emotion
         else:
-            speak("I didn't catch that. Could you please try again?")
+            speak("I didn't catch that. Could you try again?")
         attempts += 1
-    return None
-
-# # we can truncate a prompt for cost efficiency, if we want. i did it for testing 😁
-# def truncate_prompt(prompt, max_words=100):
-#     words = prompt.split()
-#     if len(words) > max_words:
-#         return " ".join(words[:max_words])
-#     return prompt
-
+    return None, "neutral"
 
 def generate_response(prompt, message_history):
     try:
-        # Append user message to history
         message_history.append({"role": "user", "content": prompt})
 
-        # Get response from OpenAI
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=message_history,
             request_timeout=10
         )
 
-        # Extract and store assistant's reply
         reply = response['choices'][0]['message']['content']
         message_history.append({"role": "assistant", "content": reply})
-        
-                # Truncate history to the last N exchanges + system message
+
+        # Manage history size
         MAX_HISTORY = 10
         if len(message_history) > 2 * MAX_HISTORY + 1:
             message_history = [message_history[0]] + message_history[-2 * MAX_HISTORY:]
-            print("Notice: You have reached the memory limit. Old messages were removed.")
-            speak("You've reached the memory limit. To keep things fast, I removed the oldest messages.")
-            
+            print("Notice: Old messages were removed.")
+            speak("I’ve cleaned up our chat history to stay efficient.")
+
         return reply
     except Exception as e:
         print(f"Error generating response: {e}")
         speak("There was an error generating a response.")
         return None
 
-
 def main():
-    message_history = [
-    {"role": "system", "content": "You are a helpful and conversational voice assistant."}]
-    # Call the function to customize TTS settings
+    message_history = [{"role": "system", "content": "You are a helpful and conversational voice assistant."}]
     customize_tts()
 
     recognizer = sr.Recognizer()
     mic = sr.Microphone()
 
     with mic as source:
-        print("Calibrating for ambient noise... please wait.")
+        print("Calibrating for ambient noise...")
         recognizer.adjust_for_ambient_noise(source, duration=1)
         print("Calibration complete.")
-    speak("Hello! I am your assistant. How can I help you today?")
+    speak("Hello! I'm your assistant. How can I help you today?")
+
     while True:
-        # Using the listen_with_retry function to allow retries
-        user_input = listen_with_retry(recognizer, mic)
+        user_input, emotion = listen_with_retry(recognizer, mic)
         if user_input:
             if user_input.lower() in ["exit", "quit", "stop", "bye", "goodbye"]:
                 speak("Goodbye!")
-                break       
-            # short_prompt = truncate_prompt(user_input)
-            # response = generate_response(short_prompt)
+                break
             response = generate_response(user_input, message_history)
             if response:
-                print(f"Assistant: {response}")
-                speak(response)
-
+                emotional_reply = respond_emotionally(response, emotion)
+                print(f"Assistant: {emotional_reply}")
+                speak(emotional_reply)
 
 if __name__ == "__main__":
     main()

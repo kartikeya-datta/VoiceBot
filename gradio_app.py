@@ -3,6 +3,8 @@ import openai
 import pyttsx3
 import os
 import speech_recognition as sr
+import librosa
+import numpy as np
 
 # Set your OpenAI API key
 openai.api_key = os.environ.get("Your_open_AI_API_key")
@@ -19,6 +21,27 @@ customize_tts()
 def speak(text):
     engine.say(text)
     engine.runAndWait()
+
+# Emotion detection functions using librosa
+def extract_emotion_features(audio_data, sr):
+    mfccs = librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=13)
+    mfccs_mean = np.mean(mfccs, axis=1)
+    zcr = np.mean(librosa.feature.zero_crossing_rate(audio_data))
+    energy = np.mean(librosa.feature.rms(y=audio_data))
+    return np.concatenate((mfccs_mean, [zcr, energy]))
+
+def classify_emotion(audio_data, sr):
+    features = extract_emotion_features(audio_data, sr)
+    energy = features[-1]
+
+    if energy > 0.06:
+        return "happy"
+    elif energy < 0.02:
+        return "sad"
+    elif features[-2] > 0.12:
+        return "angry"
+    else:
+        return "neutral"
 
 # Chat memory limit
 MAX_HISTORY = 10
@@ -42,17 +65,28 @@ def listen_with_retry(max_attempts=3):
                 print("Recognizing...")
                 text = recognizer.recognize_google(audio)
                 print(f"You said: {text}")
-                return text
+
+                # Emotion detection
+                audio_data = audio.get_wav_data()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_wav:
+                    tmp_wav.write(audio_data)
+                    tmp_wav_path = tmp_wav.name
+
+                y, sr_lib = librosa.load(tmp_wav_path, sr=None)
+                emotion = classify_emotion(y, sr_lib)
+
+                print(f"Detected Emotion: {emotion}")
+                return text, emotion
             except (sr.UnknownValueError, sr.WaitTimeoutError):
                 speak("I didn't catch that. Please try again.")
                 attempts += 1
             except sr.RequestError:
                 speak("Speech recognition service error.")
-                return None
-    return None
+                return None, "neutral"
+    return None, "neutral"
 
 # Core GPT chat function
-def chat_with_gpt(user_input):
+def chat_with_gpt(user_input, emotion):
     global message_history
     if not user_input:
         return "No input received.", ""
@@ -74,6 +108,16 @@ def chat_with_gpt(user_input):
             message_history = [message_history[0]] + message_history[-2 * MAX_HISTORY:]
             warning_msg = "⚠️ Too many messages! Older ones were removed to stay sharp."
 
+        # Adjust response based on emotion
+        if emotion == "happy":
+            reply = "😊 " + reply
+        elif emotion == "sad":
+            reply = "😢 " + reply
+        elif emotion == "angry":
+            reply = "😡 " + reply
+        else:
+            reply = reply
+
         speak(reply)
         return reply, warning_msg
     except Exception as e:
@@ -83,14 +127,14 @@ def chat_with_gpt(user_input):
 
 # Trigger voice input
 def voice_input_trigger():
-    result = listen_with_retry()
+    result, emotion = listen_with_retry()
     if result:
-        return result
-    return "😕 I couldn't understand you after a few tries. You can try again or type your message!"
+        return result, emotion
+    return "😕 I couldn't understand you after a few tries. You can try again or type your message!", "neutral"
 
 # Gradio UI
-with gr.Blocks(title="AI Voice Assistant") as demo:
-    gr.Markdown("## 🎙️ AI Voice Assistant with Text + Voice Input + Smart Memory")
+with gr.Blocks(title="AI Voice Assistant with Emotion Detection") as demo:
+    gr.Markdown("## 🎙️ AI Voice Assistant with Emotion Detection + Text + Voice Input + Smart Memory")
 
     with gr.Row():
         voice_btn = gr.Button("🎤 Speak")
@@ -98,8 +142,8 @@ with gr.Blocks(title="AI Voice Assistant") as demo:
     output = gr.Textbox(label="Assistant Response", lines=4)
     warnbox = gr.Textbox(label="Status", lines=1)
 
-    voice_btn.click(fn=voice_input_trigger, outputs=text_input)
-    text_input.change(fn=chat_with_gpt, inputs=text_input, outputs=[output, warnbox])
-    voice_btn.click(fn=chat_with_gpt, inputs=text_input, outputs=[output, warnbox])
+    voice_btn.click(fn=voice_input_trigger, outputs=[text_input, warnbox])
+    text_input.change(fn=chat_with_gpt, inputs=[text_input, warnbox], outputs=[output, warnbox])
+    voice_btn.click(fn=chat_with_gpt, inputs=[text_input, warnbox], outputs=[output, warnbox])
 
 demo.launch()
