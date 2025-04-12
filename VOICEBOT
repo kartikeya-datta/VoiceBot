@@ -51,6 +51,8 @@ def generate_response(prompt):
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}]
+            request_timeout=10  # sets the maximum time to wait for a response
+            
         )
         message = response['choices'][0]['message']['content']
         return message
