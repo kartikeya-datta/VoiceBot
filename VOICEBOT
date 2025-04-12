@@ -3,11 +3,15 @@ import pyttsx3
 import openai
 import os
 
-
 openai.api_key = os.environ.get("Your_open_AI_API_key")
 
-
 engine = pyttsx3.init()
+
+def customize_tts():
+    voices = engine.getProperty('voices')
+    engine.setProperty('voice', voices[1].id) 
+    engine.setProperty('rate', 150)
+    engine.setProperty('volume', 1.0)
 
 def speak(text):
     engine.say(text)
@@ -34,6 +38,7 @@ def listen(recognizer, mic):
             print("You didn't say anything.")
             speak("You didn't say anything.")
             return None
+
 # Listen with retry
 def listen_with_retry(recognizer, mic, max_attempts=3):
     attempts = 0
@@ -50,9 +55,8 @@ def generate_response(prompt):
     try:
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
             request_timeout=10  # sets the maximum time to wait for a response
-            
         )
         message = response['choices'][0]['message']['content']
         return message
@@ -62,6 +66,9 @@ def generate_response(prompt):
         return None
 
 def main():
+    # Call the function to customize TTS settings
+    customize_tts()
+
     recognizer = sr.Recognizer()
     mic = sr.Microphone()
 
@@ -74,7 +81,7 @@ def main():
         # Using the listen_with_retry function to allow retries
         user_input = listen_with_retry(recognizer, mic)
         if user_input:
-            if user_input.lower() in ["exit", "quit", "stop", "bye" , "goodbye"]:
+            if user_input.lower() in ["exit", "quit", "stop", "bye", "goodbye"]:
                 speak("Goodbye!")
                 break
             response = generate_response(user_input)
